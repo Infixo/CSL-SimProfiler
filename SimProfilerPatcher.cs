@@ -172,7 +172,7 @@ namespace SimProfiler
         [HarmonyPrefix, HarmonyPatch("SimulationStepImpl")]
         public static bool VehicleManager_SimulationStepImpl_Prefix(VehicleManager __instance, int subStep)
         {
-            if (subStep != 0) SimProfiler.Begin(40); // measure only when not Paused
+            //if (subStep != 0) SimProfiler.Begin(40); // measure only when not Paused
 
             if (__instance.m_parkedUpdated)
             {
@@ -255,7 +255,7 @@ namespace SimProfiler
                 statisticBase.Set((int)num8);
             }
 
-            SimProfiler.End(40);
+            //SimProfiler.End(40);
             return false;
         }
     }
