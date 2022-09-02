@@ -66,7 +66,6 @@ namespace SimProfiler
             //throw new System.NotImplementedException();
             // logic to stop measurements and wrte to a file
             SimProfiler.StopMeasuring();
-            SimProfiler.LogResults();
         }
 
         // called when unloading finished
