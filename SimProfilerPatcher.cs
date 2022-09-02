@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System;
+using System.Threading;
 using System.Reflection;
 using System.Collections.Generic;
 using UnityEngine;
@@ -40,7 +41,7 @@ namespace SimProfiler
             //Harmony.DEBUG = false;
         }
     }
-
+    /* 
     [HarmonyPatch(typeof(SimulationManager))]
     public static class SimulationManager_Patches
     {
@@ -122,20 +123,19 @@ namespace SimProfiler
                         if (flag != __instance.m_isNightTime)
                         {
                             __instance.m_isNightTime = flag;
-                            /* unlocking achievement via a delagate - problems with patching - off you go
-                            if (!flag && Singleton<SimulationManager>.instance.m_metaData.m_disableAchievements != SimulationMetaData.MetaBool.True)
-                            {
-                                ThreadHelper.dispatcher.Dispatch(delegate
-                                {
-                                    int num3 = m_nightCount.value + 1;
-                                    m_nightCount.value = num3;
-                                    if (num3 == 1001)
-                                    {
-                                        SteamHelper.UnlockAchievement("1001Nights");
-                                    }
-                                });
-                            }
-                            */
+                            // unlocking achievement via a delagate - problems with patching - off you go
+                            //if (!flag && Singleton<SimulationManager>.instance.m_metaData.m_disableAchievements != SimulationMetaData.MetaBool.True)
+                            //{
+                            //    ThreadHelper.dispatcher.Dispatch(delegate
+                            //    {
+                            //        int num3 = m_nightCount.value + 1;
+                            //        m_nightCount.value = num3;
+                            //        if (num3 == 1001)
+                            //        {
+                            //            SteamHelper.UnlockAchievement("1001Nights");
+                            //        }
+                            //    });
+                            //}
                         }
                     }
                     SimProfiler.BeginStep();
@@ -161,4 +161,152 @@ namespace SimProfiler
             return false;
         }
     } // patcher class
+*/
+    // measuring VehicleManager performance
+
+    [HarmonyPatch(typeof(VehicleManager))]
+    public static class VehicleManager_Patches
+    {
+        // protected override void SimulationStepImpl(int subStep)
+        [HarmonyPrefix, HarmonyPatch("SimulationStepImpl")]
+        public static bool SimulationStepImpl_Prefix(VehicleManager __instance, int subStep)
+        {
+            if (subStep != 0) SimProfiler.Begin(40);
+
+            // original code
+            if (__instance.m_parkedUpdated)
+            {
+                int num = __instance.m_updatedParked.Length;
+                for (int i = 0; i < num; i++)
+                {
+                    ulong num2 = __instance.m_updatedParked[i];
+                    if (num2 == 0)
+                    {
+                        continue;
+                    }
+                    __instance.m_updatedParked[i] = 0uL;
+                    for (int j = 0; j < 64; j++)
+                    {
+                        if ((num2 & (ulong)(1L << j)) != 0)
+                        {
+                            ushort num3 = (ushort)((i << 6) | j);
+                            VehicleInfo info = __instance.m_parkedVehicles.m_buffer[num3].Info;
+                            __instance.m_parkedVehicles.m_buffer[num3].m_flags &= 65531;
+                            //SimProfiler.Begin(">VM-parked");
+                            info.m_vehicleAI.UpdateParkedVehicle(num3, ref __instance.m_parkedVehicles.m_buffer[num3]);
+                            //SimProfiler.End(">VM-parked");
+                        }
+                    }
+                }
+                __instance.m_parkedUpdated = false;
+            }
+            if (subStep == 0)
+            {
+                return false;
+            }
+            SimulationManager simulationManager = Singleton<SimulationManager>.instance;
+            Vector3 physicsLodRefPos = simulationManager.m_simulationView.m_position + simulationManager.m_simulationView.m_direction * 1000f;
+            /* trolleybus only
+            for (int k = 0; k < 16384; k++)
+            {
+                Vehicle.Flags flags = __instance.m_vehicles.m_buffer[k].m_flags;
+                if ((flags & Vehicle.Flags.Created) != 0 && __instance.m_vehicles.m_buffer[k].m_leadingVehicle == 0)
+                {
+                    VehicleInfo info2 = __instance.m_vehicles.m_buffer[k].Info;
+                    SimProfiler.Begin(">VM-extra-step");
+                    info2.m_vehicleAI.ExtraSimulationStep((ushort)k, ref __instance.m_vehicles.m_buffer[k]);
+                    SimProfiler.End(">VM-extra-step");
+                }
+            }
+            */
+            int num4 = (int)(simulationManager.m_currentFrameIndex & 0xF);
+            int num5 = num4 * 1024;
+            int num6 = (num4 + 1) * 1024 - 1;
+            for (int l = num5; l <= num6; l++)
+            {
+                Vehicle.Flags flags2 = __instance.m_vehicles.m_buffer[l].m_flags;
+                if ((flags2 & Vehicle.Flags.Created) != 0 && __instance.m_vehicles.m_buffer[l].m_leadingVehicle == 0)
+                {
+                    VehicleInfo info3 = __instance.m_vehicles.m_buffer[l].Info;
+                    //SimProfiler.Begin(41);
+                    info3.m_vehicleAI.ExtraSimulationStep((ushort)l, ref __instance.m_vehicles.m_buffer[l]);
+                    //SimProfiler.End(41);
+                    //SimProfiler.Begin(42);
+                    info3.m_vehicleAI.SimulationStep((ushort)l, ref __instance.m_vehicles.m_buffer[l], physicsLodRefPos);
+                    //  SimProfiler.End(42);
+                }
+            }
+            if ((simulationManager.m_currentFrameIndex & 0xFF) == 0)
+            {
+                uint num7 = __instance.m_maxTrafficFlow / 100u;
+                if (num7 == 0)
+                {
+                    num7 = 1u;
+                }
+                uint num8 = __instance.m_totalTrafficFlow / num7;
+                if (num8 > 100)
+                {
+                    num8 = 100u;
+                }
+                __instance.m_lastTrafficFlow = num8;
+                __instance.m_totalTrafficFlow = 0u;
+                __instance.m_maxTrafficFlow = 0u;
+                //SimProfiler.Begin(">VM-stats");
+                StatisticsManager statisticsManager = Singleton<StatisticsManager>.instance;
+                StatisticBase statisticBase = statisticsManager.Acquire<StatisticInt32>(StatisticType.TrafficFlow);
+                statisticBase.Set((int)num8);
+                //SimProfiler.End(">VM-stats");
+            }
+            // end of original code
+
+            SimProfiler.End(40);
+            return false;
+        }
+    }
+/*
+    // VehicleAI
+    [HarmonyPatch(typeof(VehicleAI))]
+    public static class VehicleAI_Patches
+    {
+        //UpdateParkedVehicle - this is called for all parked vehicles if there is a need to update them; can be triggered by a Building, TransportLine and NetSegment
+        [HarmonyPrefix, HarmonyPatch("UpdateParkedVehicle")]
+        public static bool UpdateParkedVehicle_Prefix()
+        {
+            SimProfiler.Begin(">VM-parked");
+            return true;
+        }
+        [HarmonyPostfix, HarmonyPatch("UpdateParkedVehicle")]
+        public static void UpdateParkedVehicle_Postfix()
+        {
+            SimProfiler.End(">VM-parked");
+        }
+        //ExtraSimulationStep - this is only for trolleybuses
+        [HarmonyPrefix, HarmonyPatch("ExtraSimulationStep")]
+        public static bool ExtraSimulationStep_Prefix()
+        {
+            SimProfiler.Begin(">VM-extra-step");
+            return true;
+        }
+        [HarmonyPostfix, HarmonyPatch("ExtraSimulationStep")]
+        public static void ExtraSimulationStep_Postfix()
+        {
+            SimProfiler.End(">VM-extra-step");
+        }
+        //SimulationStep - this is called every 16 frames for 1024 vehicles (!)
+        [HarmonyPrefix, HarmonyPatch("SimulationStep")]
+        [HarmonyPatch(new Type[] { typeof(ushort), typeof(Vehicle), typeof(Vector3) }, new ArgumentType[] { ArgumentType.Normal, ArgumentType.Ref, ArgumentType.Normal })]
+        public static bool SimulationStep_Prefix()
+        {
+            SimProfiler.Begin(">VM-sim-step");
+            return true;
+        }
+        [HarmonyPostfix, HarmonyPatch("SimulationStep")]
+        [HarmonyPatch(new Type[] { typeof(ushort), typeof(Vehicle), typeof(Vector3) }, new ArgumentType[] { ArgumentType.Normal, ArgumentType.Ref, ArgumentType.Normal })]
+        public static void SimulationStep_Postfix()
+        {
+            SimProfiler.End(">VM-sim-step");
+        }
+    }
+*/
+
 } // namespace
